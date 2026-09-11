@@ -147,6 +147,8 @@ def _validate_page(page: PlanPage, emb: EmbosserConfig, source: str, errors: lis
                 f"page has {len(page.lines)} lines, device allows {emb.lines_per_page}",
                 source,
                 **loc,
+                row=emb.lines_per_page + 1,  # first row beyond the device page
+                col=None,
                 lines=len(page.lines),
                 max_lines=emb.lines_per_page,
             )
@@ -163,6 +165,7 @@ def _validate_page(page: PlanPage, emb: EmbosserConfig, source: str, errors: lis
                     source,
                     **loc,
                     row=row,
+                    col=emb.cells_per_line + 1,  # first column beyond the device width
                     cells=len(text),
                     max_cells=emb.cells_per_line,
                 )
@@ -277,6 +280,8 @@ def build_plan(snapshot: dict, emb: EmbosserConfig) -> tuple[Optional[list[PassP
                         page=front.version_page,
                         sheet=front.sheet,
                         side="back",
+                        row=None,
+                        col=None,
                     )
                 )
 
@@ -541,9 +546,9 @@ def _verify_events(
         if emb.page_break == "form_feed":
             if pos < len(events) and events[pos][0] == "ff":
                 pos += 1
-            elif fi == n_pages and pos >= len(events):
-                pass  # tolerate a missing final form feed at EOF
             else:
+                # every page, including the last, must be terminated by a
+                # form feed; a missing one means the stream is damaged
                 mismatch(
                     "missing_page_break",
                     f"no form feed after file page {fi}",
@@ -650,6 +655,30 @@ def readback_batch(snapshot: dict, emb: EmbosserConfig, files: list[dict]) -> di
             )
         all_mismatches.extend(entry["mismatches"])
         out_files.append(entry)
+
+    # every planned pass must have a file; a missing one fails the readback
+    seen = {f["pass_name"] for f in files}
+    for p in planned["passes"]:
+        if p["pass"] in seen:
+            continue
+        entry = {
+            "pass": p["pass"],
+            "filename": None,
+            "ok": False,
+            "pages_checked": 0,
+            "lines_checked": 0,
+            "cells_checked": 0,
+            "mismatches": [
+                {
+                    "type": "missing_file",
+                    "detail": f"pass '{p['pass']}' is planned but has no file in this batch",
+                    "source": p["pass"],
+                }
+            ],
+        }
+        all_mismatches.extend(entry["mismatches"])
+        out_files.append(entry)
+
     return {
         "ok": not all_mismatches,
         "files": out_files,

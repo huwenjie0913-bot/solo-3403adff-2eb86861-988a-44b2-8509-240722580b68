@@ -235,6 +235,7 @@ def test_compile_line_too_long(client, job_factory):
     assert [e["type"] for e in errors] == ["line_too_long"]
     e = errors[0]
     assert (e["page"], e["row"], e["source"]) == (1, 1, "duplex")
+    assert e["col"] == 11  # first column beyond the 10-cell device width
     assert (e["cells"], e["max_cells"]) == (12, 10)
 
 
@@ -244,6 +245,8 @@ def test_compile_page_overflow(client, job_factory):
     assert [e["type"] for e in errors] == ["page_overflow"]
     e = errors[0]
     assert (e["page"], e["source"]) == (1, "duplex")
+    assert e["row"] == 6  # first row beyond the 5-line device page
+    assert e["col"] is None
     assert (e["lines"], e["max_lines"]) == (6, 5)
 
 
@@ -253,6 +256,7 @@ def test_compile_missing_back_side(client, job_factory):
     assert [e["type"] for e in errors] == ["missing_back_side"]
     e = errors[0]
     assert (e["page"], e["sheet"], e["side"], e["source"]) == (1, 1, "back", "duplex")
+    assert e["row"] is None and e["col"] is None  # a whole page is missing
 
 
 def test_compile_pad_missing_back(client, job_factory):
@@ -423,3 +427,52 @@ def test_readback_detects_checksum_and_page_break_damage(app_client):
     types = {m["type"] for m in report["mismatches"]}
     assert "checksum_mismatch" in types
     assert "missing_page_break" in types
+
+
+def test_readback_missing_final_form_feed_fails(app_client):
+    app, client = app_client
+    body = _make_batch(client)  # duplex, form_feed page control
+    file_id = body["ticket"]["passes"][0]["file_id"]
+
+    session = app.state.SessionLocal()
+    row = session.get(CompileFile, file_id)
+    data = bytes(row.content)
+    assert data.endswith(b"\x0c")
+    data = data[:-1]  # strip only the final form feed
+    row.content = data
+    row.sha256 = hashlib.sha256(data).hexdigest()  # keep the checksum clean
+    session.commit()
+    session.close()
+
+    report = client.post(f"/compile-batches/{body['batch_id']}/readback").json()
+    assert report["ok"] is False
+    mm = report["mismatches"]
+    assert [m["type"] for m in mm] == ["missing_page_break"]
+    assert mm[0]["file_page"] == 2  # the last page lost its form feed
+    # page order and the cell mapping were still verified before the break
+    f = report["files"][0]
+    assert (f["pages_checked"], f["cells_checked"]) == (2, 4)
+
+
+def test_readback_missing_back_file_fails(app_client):
+    app, client = app_client
+    body = _make_batch(client, content="⠁\f⠃", duplex_mode="simplex_manual")
+    files = client.get(f"/compile-batches/{body['batch_id']}/files").json()
+    back_id = {f["pass"]: f["file_id"] for f in files}["back"]
+
+    session = app.state.SessionLocal()
+    session.delete(session.get(CompileFile, back_id))  # lose the back-pass file
+    session.commit()
+    session.close()
+
+    report = client.post(f"/compile-batches/{body['batch_id']}/readback").json()
+    assert report["ok"] is False
+    missing = [m for m in report["mismatches"] if m["type"] == "missing_file"]
+    assert len(missing) == 1
+    assert missing[0]["source"] == "back"
+    # the remaining front file is still verified against the version
+    by_pass = {f["pass"]: f for f in report["files"]}
+    assert by_pass["front"]["ok"] is True
+    assert (by_pass["front"]["pages_checked"], by_pass["front"]["cells_checked"]) == (1, 1)
+    assert by_pass["back"]["ok"] is False
+    assert by_pass["back"]["filename"] is None
