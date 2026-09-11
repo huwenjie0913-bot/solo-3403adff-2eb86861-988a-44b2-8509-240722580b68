@@ -487,11 +487,10 @@ def _paginate(
                 continue
             if dp[j] == INF:
                 continue
-            if j > 0:
-                if forced_ps[i - 1] - forced_ps[j] > 0:
-                    continue  # a locked break falls inside this page
-                if not (cons.allowed[j] or cons.forced[j]):
-                    continue
+            if forced_ps[i - 1] - forced_ps[j] > 0:
+                continue  # a locked break falls inside this page
+            if j > 0 and not (cons.allowed[j] or cons.forced[j]):
+                continue
             cost = dp[j] + page_w + (break_cost(j, i) if j > 0 else 0.0)
             if cost < dp[i] - 1e-9:
                 dp[i] = cost

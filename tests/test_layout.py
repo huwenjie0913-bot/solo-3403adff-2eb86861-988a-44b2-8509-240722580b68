@@ -19,16 +19,21 @@ def run(content, structure=None, params=None):
 
 
 def test_basic_pagination_and_mapping():
-    content = "\n".join(["⠁" * 5] * 7)  # 7 lines of 5 cells, page capacity 5
-    result = run(content)
+    # 7 one-line paragraphs (blank lines keep them separate), capacity 5
+    content = "\n\n".join(["⠁" * 5] * 7)
+    params = LayoutParams(cells_per_line=10, lines_per_page=5, blank_lines_between_paragraphs=0)
+    result = run(content, params=params)
     assert result["solutions"]
     best = result["solutions"][0]
-    assert best["stats"]["pages"] == 2
+    # 13 output lines (7 paragraphs + 6 source blanks) -> 3 pages
+    assert best["stats"]["pages"] == 3
     # every source line is mapped
-    for line_no in range(7):
+    for line_no in range(13):
         assert str(line_no) in best["mapping"]
-    rows = [best["mapping"][str(i)][0]["row"] for i in range(5)]
-    assert rows == [1, 2, 3, 4, 5]
+    assert best["mapping"]["0"][0] == {"page": 1, "row": 1}
+    assert best["mapping"]["4"][0] == {"page": 1, "row": 5}
+    assert best["mapping"]["6"][0] == {"page": 2, "row": 2}
+    assert best["mapping"]["12"][0] == {"page": 3, "row": 3}
 
 
 def test_paragraph_rewrap_preserves_cells():
@@ -141,10 +146,14 @@ def test_widow_orphan_avoided():
 
 
 def test_max_pages_violation():
-    content = "\n".join(["⠁"] * 12)
-    params = LayoutParams(cells_per_line=10, lines_per_page=5, max_pages=2)
+    # 12 one-line paragraphs + 11 source blanks = 23 lines -> 5 pages
+    content = "\n\n".join(["⠁"] * 12)
+    params = LayoutParams(
+        cells_per_line=10, lines_per_page=5, blank_lines_between_paragraphs=0, max_pages=2
+    )
     result = run(content, params=params)
     best = result["solutions"][0]
+    assert best["stats"]["pages"] == 5
     assert any(v["rule"] == "max_pages" for v in best["violations"])
 
 
@@ -181,8 +190,10 @@ def test_forced_mid_word_break_recorded():
 
 
 def test_sheet_and_side_assignment():
-    content = "\n".join(["⠁"] * 12)  # 3 pages at capacity 5
-    result = run(content)
+    # 12 one-line paragraphs + 11 source blanks = 23 lines -> 5 pages
+    content = "\n\n".join(["⠁"] * 12)
+    params = LayoutParams(cells_per_line=10, lines_per_page=5, blank_lines_between_paragraphs=0)
+    result = run(content, params=params)
     best = result["solutions"][0]
     assert best["pages"][0]["side"] == "front" and best["pages"][0]["sheet"] == 1
     assert best["pages"][1]["side"] == "back" and best["pages"][1]["sheet"] == 1

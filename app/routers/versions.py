@@ -84,7 +84,6 @@ def confirm_version(job_id: int, payload: VersionCreate, db: Session = Depends(g
     db.add(version)
     db.commit()
     db.refresh(version)
-    version.snapshot["version_id"] = version.id
     return _version_summary(version)
 
 
@@ -104,16 +103,21 @@ def _get_version_or_404(db: Session, version_id: int) -> Version:
     return v
 
 
+def _snapshot_of(v: Version) -> dict:
+    """Snapshot with the version id injected (not stored in the JSON blob)."""
+    return {**v.snapshot, "version_id": v.id}
+
+
 @router.get("/versions/{version_id}")
 def get_version(version_id: int, db: Session = Depends(get_db)) -> dict:
     v = _get_version_or_404(db, version_id)
-    return {**_version_summary(v), "snapshot": v.snapshot}
+    return {**_version_summary(v), "snapshot": _snapshot_of(v)}
 
 
 @router.get("/versions/{version_id}/export/pef")
 def export_pef(version_id: int, db: Session = Depends(get_db)) -> Response:
     v = _get_version_or_404(db, version_id)
-    pef = version_to_pef(v.snapshot)
+    pef = version_to_pef(_snapshot_of(v))
     return Response(
         content=pef,
         media_type="application/x-pef+xml",
@@ -132,7 +136,7 @@ def export_svg(
     """SVG proof of one sheet (embossed/debossed dots, or an overlay)."""
     v = _get_version_or_404(db, version_id)
     try:
-        svg = version_to_svg(v.snapshot, sheet_no=sheet, layer=layer, style=style)
+        svg = version_to_svg(_snapshot_of(v), sheet_no=sheet, layer=layer, style=style)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return Response(content=svg, media_type="image/svg+xml")
@@ -142,4 +146,4 @@ def export_svg(
 def export_trace(version_id: int, db: Session = Depends(get_db)) -> dict:
     """JSON trace record: config, mapping, dot coordinates, collisions."""
     v = _get_version_or_404(db, version_id)
-    return version_to_trace(v.snapshot)
+    return version_to_trace(_snapshot_of(v))

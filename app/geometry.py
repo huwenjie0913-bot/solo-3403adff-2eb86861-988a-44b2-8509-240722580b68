@@ -4,14 +4,21 @@ Coordinate system: origin at the top-left corner of the paper, x to the
 right, y downwards, all values in millimetres.
 
 The *front* side is laid out in logical coordinates.  The *back* side of an
-interpoint sheet is computed by applying the flip transform of the
-configured flip mode (the physical rotation of the sheet) plus the
-interpoint offset that staggers the back dots between the front dots:
+interpoint sheet uses the same logical grid, shifted by the interpoint
+offset (which staggers the back dots into the gaps of the front grid), and
+is then mapped to physical coordinates by the flip transform of the
+configured flip mode (the physical rotation of the sheet):
 
 * ``page_flip`` — the sheet turns around the vertical axis (like a book
   page): ``x' = W - x``, ``y' = y``.
 * ``top_flip`` — the sheet turns around the horizontal axis (tumble):
   ``x' = x``, ``y' = H - y``.
+
+The offset is applied *before* the flip, in the back side's own logical
+frame (the frame the embosser sees when the flipped sheet is loaded).
+This keeps the mirror transform, the binding-margin mirroring and
+``printable_back`` consistent: any back dot whose offset logical position
+lies inside the front printable area lands inside ``printable_back``.
 """
 
 from __future__ import annotations
@@ -143,9 +150,15 @@ def dot_position_front(cfg: JobConfig, grid: Grid, row: int, col: int, dot: int)
 def dot_position_back(cfg: JobConfig, grid: Grid, row: int, col: int, dot: int) -> tuple[float, float]:
     """Physical coordinates of a back-side dot, seen from the front.
 
-    The back cell uses the same logical grid; its position is mirrored by
-    the flip transform and shifted by the interpoint offset.
+    The back cell uses the same logical grid as the front.  The interpoint
+    offset is applied in that logical frame (the frame the embosser sees
+    with the flipped sheet loaded) and the result is mirrored by the flip
+    transform.  Applying the offset before the flip — not after — is what
+    keeps legal duplex dots inside ``printable_back``: for ``page_flip`` a
+    positive x offset shifts back dots away from the physical right edge
+    (towards the inside of the sheet) instead of pushing them off it.
     """
     x, y = dot_position_front(cfg, grid, row, col, dot)
-    x, y = flip_point(cfg, x, y)
-    return x + cfg.interpoint.offset_x_mm, y + cfg.interpoint.offset_y_mm
+    x += cfg.interpoint.offset_x_mm
+    y += cfg.interpoint.offset_y_mm
+    return flip_point(cfg, x, y)

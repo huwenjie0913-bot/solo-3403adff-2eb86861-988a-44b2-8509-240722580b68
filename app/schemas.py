@@ -57,8 +57,12 @@ class InterpointConfig(BaseModel):
     """Duplex (interpoint) embossing parameters.
 
     The back side is shifted by ``offset_*`` relative to the front grid so
-    that raised dots from both sides do not coincide.  Any pair of front/back
-    dots closer than ``min_separation_mm`` is reported as a collision.
+    that raised dots from both sides do not coincide.  The offset is
+    expressed in the back side's own logical frame (the frame the embosser
+    sees with the flipped sheet loaded) and is applied *before* the flip
+    mirror, so a positive x offset moves back dots away from the physical
+    outer edge.  Any pair of front/back dots closer than
+    ``min_separation_mm`` is reported as a collision.
     """
 
     enabled: bool = True
