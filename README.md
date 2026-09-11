@@ -22,6 +22,15 @@
 - **版本**：确认方案后另存版本（快照含配置、方案、映射、内容哈希）。
 - **导出**：PEF（Portable Embosser Format）、凸点/凹点 SVG 校样、
   JSON 追溯记录（含每点坐标与撞点来源）。
+- **压印机编译**：压印机配置声明每行方数、每页行数、6/8 点能力、
+  输入编码（BRF / UTF-8 Braille）、换页控制与双面送纸方式。读取已确认
+  版本，核对版面网格与设备容量后生成可发送的字节流；原生双面机按纸张
+  配对输出，单面机拆为正、背两次作业并按 page_flip / top_flip 计算页序、
+  倒序规则与重新装纸方向。编译不改写盲文单元或显式换页；无法编码字符、
+  8 点不兼容、行列超限、缺失背面、控制字节冲突均带页/行/列/来源返回。
+  每个批次绑定版本与设备配置快照，可下载各次作业文件与 JSON 工单
+  （纸张顺序、装纸朝向、字节校验值、单元映射）；回读接口重新解析字节流，
+  确认页序、换页与单元映射仍与原版本一致。
 
 ## 运行
 
@@ -72,6 +81,15 @@ python3 -m pytest tests/ -q
 | GET | `/versions/{id}/export/pef` | PEF 导出（卷 1 正面、卷 2 背面） |
 | GET | `/versions/{id}/export/svg?sheet=&layer=&style=` | SVG 校样：`layer=front/back/overlay`，`style=emboss/deboss` |
 | GET | `/versions/{id}/export/trace` | JSON 追溯记录 |
+| POST | `/embossers` | 注册压印机配置（方数/行数、6/8 点、编码、换页、双面送纸） |
+| GET | `/embossers` / `/embossers/{id}` | 压印机列表 / 详情 |
+| DELETE | `/embossers/{id}` | 删除配置（已有批次保留配置快照） |
+| POST | `/versions/{id}/compile` | 编译版本为字节流（`embosser_id` 或内联 `embosser`）；失败 422 含错误定位 |
+| GET | `/compile-batches?version_id=` / `/compile-batches/{id}` | 编译批次列表 / 详情（含工单） |
+| GET | `/compile-batches/{id}/ticket` | 下载 JSON 工单（纸张顺序、装纸朝向、校验值、单元映射） |
+| GET | `/compile-batches/{id}/files` | 批次各次作业文件列表 |
+| GET | `/compile-files/{id}/download` | 下载某次作业的 BRF / UTF-8 Braille 字节流 |
+| POST | `/compile-batches/{id}/readback` | 回读校验：重新解析字节流并对照原版本 |
 
 ## 示例
 
@@ -93,6 +111,19 @@ curl -X POST localhost:8000/jobs/1/versions -H 'Content-Type: application/json' 
 curl localhost:8000/versions/1/export/pef
 curl 'localhost:8000/versions/1/export/svg?sheet=1&layer=overlay'
 curl localhost:8000/versions/1/export/trace
+
+# 注册压印机并编译版本（单面机：正、背两个作业文件）
+curl -X POST localhost:8000/embossers -H 'Content-Type: application/json' -d '{
+  "name": "simplex-6dot",
+  "config": {"cells_per_line": 30, "lines_per_page": 20, "supports_8dot": false,
+             "input_encoding": "brf", "page_break": "form_feed", "line_ending": "crlf",
+             "duplex_mode": "simplex_manual"}
+}'
+curl -X POST localhost:8000/versions/1/compile -H 'Content-Type: application/json' \
+     -d '{"embosser_id": 1, "note": "first run"}'
+curl localhost:8000/compile-batches/1/ticket        # JSON 工单
+curl -OJ localhost:8000/compile-files/1/download    # 正面作业字节流
+curl -X POST localhost:8000/compile-batches/1/readback   # 回读校验 -> ok: true
 ```
 
 ## 结构说明
@@ -106,3 +137,27 @@ curl localhost:8000/versions/1/export/trace
   （标题同页行数、段首末最少行数、表格不拆分、锁定页界、页数预算等）。
 - 无法满足的规则在运行级 `unsatisfiable_rules` 与方案级
   `violations` / `unsatisfied_rules` 中分别报告。
+
+## 压印机编译说明
+
+- **设备配置**（`EmbosserConfig`）：`cells_per_line` / `lines_per_page`
+  （设备容量）、`supports_8dot`、`input_encoding`（`brf` 北美盲文 ASCII /
+  `unicode_braille` UTF-8 盲文）、`page_break`（`form_feed` 每页后发 FF；
+  `line_advance` 用空行补齐整页走纸；`none` 设备自行换页）、`line_ending`
+  （lf/crlf/cr）、`duplex_mode`（`native_duplex` / `simplex_manual`）、
+  `pad_missing_back`（缺失背面补空白页而非报错）、`extra_control_bytes`
+  （额外保留控制字节，单元编码与之冲突即报错）。
+- **单面机装纸规则**（假设出纸面朝上、后印者压在先印者之上）：
+  - `page_flip`：整叠纸绕垂直轴左右翻转后重新装纸，叠序被整体反转，
+    背面作业按**正序**输出（`reload.direction=left_right`）。
+  - `top_flip`：从出纸叠顶部逐张取纸、每张上下翻滚重新进纸，先印的后出，
+    背面作业按**倒序**输出（`reload.direction=top_bottom`）。
+- **编译错误**：`unencodable_character`、`eight_dot_not_supported`、
+  `line_too_long`、`page_overflow`、`missing_back_side`、
+  `control_byte_conflict`，均带 `page`/`row`/`col` 与 `source`
+  （`duplex` / `front` / `back` 作业次）。
+- **批次与工单**：批次绑定 `version_id` 与设备配置快照；工单含
+  `paper_order`（纸张顺序）、`reload`（装纸朝向与倒序规则）、每文件
+  `sha256` 与 `cell_mapping`（文件页 → 版本页/源行的单元映射）。
+- **回读**：按批次的设备快照重新解析字节流，逐页逐行逐单元对照原版本，
+  并核对换页标记与文件校验值；不一致处返回页、行、列与来源。

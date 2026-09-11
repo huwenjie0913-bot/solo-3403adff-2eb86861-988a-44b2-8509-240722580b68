@@ -9,7 +9,7 @@ from ..braille import brf_to_unicode
 from ..content import build_blocks, parse_content
 from ..db import get_db
 from ..geometry import compute_grid
-from ..models import Job, LayoutRun, PreflightReport, Version
+from ..models import CompileBatch, CompileFile, Job, LayoutRun, PreflightReport, Version
 from ..preflight import _page_dots, run_preflight
 from ..schemas import JobConfig, JobCreate, Structure
 
@@ -76,6 +76,14 @@ def get_job(job_id: int, db: Session = Depends(get_db)) -> dict:
 @router.delete("/jobs/{job_id}", status_code=204)
 def delete_job(job_id: int, db: Session = Depends(get_db)) -> Response:
     job = get_job_or_404(db, job_id)
+    version_ids = [v.id for v in db.query(Version).filter(Version.job_id == job_id).all()]
+    if version_ids:
+        batch_ids = [
+            b.id for b in db.query(CompileBatch).filter(CompileBatch.version_id.in_(version_ids)).all()
+        ]
+        if batch_ids:
+            db.query(CompileFile).filter(CompileFile.batch_id.in_(batch_ids)).delete()
+        db.query(CompileBatch).filter(CompileBatch.version_id.in_(version_ids)).delete()
     for model in (PreflightReport, LayoutRun, Version):
         db.query(model).filter(model.job_id == job_id).delete()
     db.delete(job)

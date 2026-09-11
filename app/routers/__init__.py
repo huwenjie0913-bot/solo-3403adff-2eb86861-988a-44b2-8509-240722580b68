@@ -1,5 +1,5 @@
 """API routers."""
 
-from . import jobs, layout, versions
+from . import embosser, jobs, layout, versions
 
-__all__ = ["jobs", "layout", "versions"]
+__all__ = ["embosser", "jobs", "layout", "versions"]

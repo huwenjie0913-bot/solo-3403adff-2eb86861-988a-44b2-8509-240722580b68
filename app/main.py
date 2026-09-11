@@ -18,7 +18,9 @@ def create_app(db_url: str | None = None) -> FastAPI:
             "Preflight and reflow of interpoint (duplex) braille layouts: "
             "dot-coordinate geometry, illegal-character/bounds/capacity/"
             "mirror/collision checks, constraint-aware pagination, ranked "
-            "solutions, versioned confirmation and PEF/SVG/JSON export. "
+            "solutions, versioned confirmation, PEF/SVG/JSON export and "
+            "embosser job compilation (BRF/UTF-8 byte streams, duplex pass "
+            "planning, JSON work tickets, readback verification). "
             "Runs fully locally."
         ),
         version=__version__,
@@ -29,6 +31,7 @@ def create_app(db_url: str | None = None) -> FastAPI:
     app.include_router(routers.jobs.router)
     app.include_router(routers.layout.router)
     app.include_router(routers.versions.router)
+    app.include_router(routers.embosser.router)
 
     @app.get("/")
     def root() -> dict:
@@ -51,6 +54,17 @@ def create_app(db_url: str | None = None) -> FastAPI:
                 "GET /versions/{id}/export/pef",
                 "GET /versions/{id}/export/svg",
                 "GET /versions/{id}/export/trace",
+                "POST /embossers",
+                "GET /embossers",
+                "GET /embossers/{id}",
+                "DELETE /embossers/{id}",
+                "POST /versions/{id}/compile",
+                "GET /compile-batches",
+                "GET /compile-batches/{id}",
+                "GET /compile-batches/{id}/ticket",
+                "GET /compile-batches/{id}/files",
+                "GET /compile-files/{id}/download",
+                "POST /compile-batches/{id}/readback",
             ],
         }
 

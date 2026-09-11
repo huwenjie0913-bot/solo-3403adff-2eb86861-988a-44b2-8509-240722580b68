@@ -249,3 +249,81 @@ class VersionSummary(BaseModel):
     solution_index: Optional[int]
     note: str
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Embossers & compile batches
+# ---------------------------------------------------------------------------
+
+PageBreakMode = Literal["form_feed", "line_advance", "none"]
+LineEnding = Literal["lf", "crlf", "cr"]
+EmbosserEncoding = Literal["brf", "unicode_braille"]
+DuplexMode = Literal["native_duplex", "simplex_manual"]
+
+
+class EmbosserConfig(BaseModel):
+    """Embosser device profile.
+
+    Declares the device grid capacity (cells per line, lines per page), its
+    6/8-dot capability, the byte encoding it accepts, the page-advance
+    control and the duplex paper handling.
+    """
+
+    cells_per_line: int = Field(..., gt=0, description="device cells per line (每行方数)")
+    lines_per_page: int = Field(..., gt=0, description="device lines per page (每页行数)")
+    supports_8dot: bool = Field(False, description="device can emboss 8-dot cells")
+    input_encoding: EmbosserEncoding = Field(
+        "brf",
+        description="byte encoding the device accepts: 'brf' (North American "
+        "Braille ASCII) or 'unicode_braille' (UTF-8 Braille Patterns)",
+    )
+    page_break: PageBreakMode = Field(
+        "form_feed",
+        description="form_feed: emit FF (0x0C) after every page; line_advance: "
+        "pad each page to lines_per_page with blank lines; none: pages follow "
+        "back to back (the device advances the page itself)",
+    )
+    line_ending: LineEnding = "lf"
+    duplex_mode: DuplexMode = Field(
+        "native_duplex",
+        description="native_duplex: one file, front/back paired per sheet; "
+        "simplex_manual: separate front and back passes with reload instructions",
+    )
+    pad_missing_back: bool = Field(
+        False,
+        description="pad a sheet that has no back page with a blank page "
+        "instead of failing with missing_back_side",
+    )
+    extra_control_bytes: list[int] = Field(
+        default_factory=list,
+        description="additional reserved control bytes (0-255), e.g. ESC for "
+        "device setup strings; cells encoding to one of these bytes are rejected",
+    )
+
+    @model_validator(mode="after")
+    def _check_control_bytes(self) -> "EmbosserConfig":
+        for b in self.extra_control_bytes:
+            if not 0 <= b <= 255:
+                raise ValueError(f"control byte {b} out of range (0-255)")
+        return self
+
+
+class EmbosserCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    config: EmbosserConfig
+
+
+class CompileRequest(BaseModel):
+    """Bind a version to an embosser profile and compile byte streams."""
+
+    embosser_id: Optional[int] = Field(None, description="registered embosser id")
+    embosser: Optional[EmbosserConfig] = Field(
+        None, description="inline, unsaved embosser profile (alternative to embosser_id)"
+    )
+    note: str = ""
+
+    @model_validator(mode="after")
+    def _exactly_one_profile(self) -> "CompileRequest":
+        if (self.embosser_id is None) == (self.embosser is None):
+            raise ValueError("provide exactly one of embosser_id or embosser")
+        return self
